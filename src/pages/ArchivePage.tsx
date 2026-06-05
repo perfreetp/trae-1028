@@ -46,8 +46,17 @@ import type { SkyPlan, ArchiveFile } from '../types';
 const { RangePicker } = DatePicker;
 const { Option } = Select;
 
+const categoryMap: Record<string, string> = {
+  plan: '施工方案',
+  record: '施工记录',
+  check: '检查记录',
+  accept: '验收报告',
+  photo: '现场照片',
+  other: '其他资料',
+};
+
 const ArchivePage = () => {
-  const { plans, addArchive, getArchivesByPlanId, currentUser } = useAppStore();
+  const { plans, addArchive, getArchivesByPlanId, currentUser, archives } = useAppStore();
   const [activeTab, setActiveTab] = useState('stats');
   const [selectedMonth, setSelectedMonth] = useState(dayjs());
   const [detailModal, setDetailModal] = useState(false);
@@ -56,7 +65,6 @@ const ArchivePage = () => {
   const [uploading, setUploading] = useState(false);
   const [fileList, setFileList] = useState<any[]>([]);
   const [form] = Form.useForm();
-  const [, forceUpdate] = useState({});
 
   const archivedPlans = useMemo(() => 
     plans.filter(p => ['signout', 'completed', 'archived'].includes(p.status)),
@@ -101,7 +109,7 @@ const ArchivePage = () => {
   const planArchiveFiles = useMemo(() => {
     if (!selectedPlan) return [];
     return getArchivesByPlanId(selectedPlan.id);
-  }, [selectedPlan, getArchivesByPlanId, detailModal]);
+  }, [selectedPlan, getArchivesByPlanId, archives, detailModal]);
 
   const handlePreview = (file: ArchiveFile) => {
     message.info(`正在预览：${file.fileName}`);
@@ -120,13 +128,15 @@ const ArchivePage = () => {
       }
 
       setUploading(true);
+      const wasFromDetail = detailModal || selectedPlan;
+      const planId = selectedPlan!.id;
 
       for (const file of fileList) {
         const fileName = file.name;
         const fileExt = fileName.split('.').pop()?.toLowerCase() || 'other';
         
         addArchive({
-          planId: selectedPlan!.id,
+          planId,
           fileName,
           fileType: fileExt,
           fileSize: file.size || 102400,
@@ -141,7 +151,14 @@ const ArchivePage = () => {
       setUploadModal(false);
       setFileList([]);
       form.resetFields();
-      forceUpdate({});
+
+      if (wasFromDetail) {
+        const plan = plans.find(p => p.id === planId);
+        if (plan) {
+          setSelectedPlan(plan);
+          setTimeout(() => setDetailModal(true), 100);
+        }
+      }
     } catch (error) {
       console.error(error);
       message.error('上传失败，请检查表单信息');
@@ -259,7 +276,7 @@ const ArchivePage = () => {
     ],
   };
 
-  const archiveColumns = [
+  const archiveColumns = useMemo(() => [
     {
       title: '项目名称',
       dataIndex: 'projectName',
@@ -327,7 +344,7 @@ const ArchivePage = () => {
         </Space>
       ),
     },
-  ];
+  ], [getArchivesByPlanId, archives]);
 
   const tabItems = [
     {
@@ -523,12 +540,20 @@ const ArchivePage = () => {
                   >
                     <List.Item.Meta
                       avatar={<Avatar icon={getFileIcon(file.fileType)} style={{ backgroundColor: 'transparent' }} />}
-                      title={file.fileName}
+                      title={
+                        <div className="flex items-center gap-2">
+                          <span>{file.fileName}</span>
+                          {file.category && (
+                            <Tag color="blue" size="small">{categoryMap[file.category] || file.category}</Tag>
+                          )}
+                        </div>
+                      }
                       description={
-                        <div className="text-sm text-gray-500 flex items-center gap-4">
+                        <div className="text-sm text-gray-500 flex items-center gap-4 flex-wrap">
                           <span>{formatFileSize(file.fileSize)}</span>
                           <span>上传人：{file.uploader}</span>
                           <span>{file.uploadTime}</span>
+                          {file.description && <span className="text-gray-400">备注：{file.description}</span>}
                         </div>
                       }
                     />

@@ -45,8 +45,8 @@ const ApprovalPage = () => {
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
 
-  const pendingPlans = useMemo(() => plans.filter(p => ['pending', 'approved1'].includes(p.status)), [plans]);
-  const approvedPlans = useMemo(() => plans.filter(p => ['approved', 'commanded', 'signin', 'executing', 'signout', 'completed', 'archived'].includes(p.status)), [plans]);
+  const pendingPlans = useMemo(() => plans.filter(p => ['pending', 'approved1', 'approved'].includes(p.status)), [plans]);
+  const approvedPlans = useMemo(() => plans.filter(p => ['commanded', 'signin', 'executing', 'signout', 'completed', 'archived'].includes(p.status)), [plans]);
   const rejectedPlans = useMemo(() => plans.filter(p => p.status === 'rejected'), [plans]);
 
   const getApprovalLevel = (status: SkyPlan['status']) => {
@@ -60,49 +60,46 @@ const ApprovalPage = () => {
 
   const getApprovalList = (plan: SkyPlan): ApprovalRecord[] => {
     const existingApprovals = getApprovalsByPlanId(plan.id);
+    
     if (existingApprovals.length > 0) {
-      return existingApprovals.sort((a, b) => a.level - b.level);
+      const sorted = existingApprovals.sort((a, b) => a.level - b.level);
+      const hasRejected = sorted.some(a => a.result === 'rejected');
+      if (hasRejected) {
+        return sorted;
+      }
+      
+      const result: ApprovalRecord[] = [...sorted];
+      const maxLevel = Math.max(...sorted.map(a => a.level));
+      
+      if (maxLevel < 3 && plan.status !== 'rejected') {
+        const nextLevels = [
+          { level: 1, levelName: '车间审批' },
+          { level: 2, levelName: '段级审批' },
+          { level: 3, levelName: '调度审批' },
+        ];
+        
+        for (let i = maxLevel + 1; i <= 3; i++) {
+          const levelInfo = nextLevels.find(l => l.level === i);
+          if (levelInfo) {
+            result.push({
+              id: `pending-${i}`,
+              planId: plan.id,
+              level: i,
+              levelName: levelInfo.levelName,
+              approver: '',
+              approvalTime: '',
+              opinion: '',
+              result: 'pending',
+            });
+          }
+        }
+      }
+      
+      return result;
     }
     
     const approvals: ApprovalRecord[] = [];
-    if (plan.status !== 'pending') {
-      approvals.push({
-        id: '1',
-        planId: plan.id,
-        level: 1,
-        levelName: '车间审批',
-        approver: '王主任',
-        approvalTime: dayjs().subtract(1, 'day').format('YYYY-MM-DD HH:mm'),
-        opinion: '同意，各项准备工作就绪，请上级审批',
-        result: 'approved',
-      });
-    }
-    if (['approved1', 'approved', 'commanded', 'signin', 'executing', 'signout', 'completed', 'archived'].includes(plan.status)) {
-      approvals.push({
-        id: '2',
-        planId: plan.id,
-        level: 2,
-        levelName: '段级审批',
-        approver: '李段长',
-        approvalTime: dayjs().subtract(12, 'hour').format('YYYY-MM-DD HH:mm'),
-        opinion: '同意，注意施工质量和安全防护',
-        result: 'approved',
-      });
-    }
-    if (['approved', 'commanded', 'signin', 'executing', 'signout', 'completed', 'archived'].includes(plan.status)) {
-      approvals.push({
-        id: '3',
-        planId: plan.id,
-        level: 3,
-        levelName: '调度审批',
-        approver: '张调度',
-        approvalTime: dayjs().subtract(6, 'hour').format('YYYY-MM-DD HH:mm'),
-        opinion: '同意，已下达封锁命令，请按时执行并销记',
-        result: 'approved',
-      });
-    }
     if (plan.status === 'rejected') {
-      approvals.length = 0;
       approvals.push({
         id: '1',
         planId: plan.id,
@@ -113,7 +110,54 @@ const ApprovalPage = () => {
         opinion: '施工范围不明确，人员配置不足，请补充完善后重新提交',
         result: 'rejected',
       });
+      return approvals;
     }
+    
+    const currentLevel = getApprovalLevel(plan.status).level;
+    
+    for (let i = 1; i <= 3; i++) {
+      const levelInfo = [
+        { level: 1, levelName: '车间审批', approver: '王主任', opinion: '同意，各项准备工作就绪，请上级审批' },
+        { level: 2, levelName: '段级审批', approver: '李段长', opinion: '同意，注意施工质量和安全防护' },
+        { level: 3, levelName: '调度审批', approver: '张调度', opinion: '同意，已下达封锁命令，请按时执行并销记' },
+      ].find(l => l.level === i)!;
+      
+      if (i < currentLevel) {
+        approvals.push({
+          id: String(i),
+          planId: plan.id,
+          level: i,
+          levelName: levelInfo.levelName,
+          approver: levelInfo.approver,
+          approvalTime: dayjs().subtract(4 - i, i === 1 ? 'day' : 'hour').format('YYYY-MM-DD HH:mm'),
+          opinion: levelInfo.opinion,
+          result: 'approved',
+        });
+      } else if (i === currentLevel) {
+        approvals.push({
+          id: String(i),
+          planId: plan.id,
+          level: i,
+          levelName: levelInfo.levelName,
+          approver: '',
+          approvalTime: '',
+          opinion: '',
+          result: 'pending',
+        });
+      } else {
+        approvals.push({
+          id: String(i),
+          planId: plan.id,
+          level: i,
+          levelName: levelInfo.levelName,
+          approver: '',
+          approvalTime: '',
+          opinion: '',
+          result: 'pending',
+        });
+      }
+    }
+    
     return approvals;
   };
 
@@ -251,7 +295,7 @@ const ApprovalPage = () => {
           <Button type="link" size="small" icon={<Eye size={14} />} onClick={() => handleViewDetail(record)}>
             详情
           </Button>
-          {['pending', 'approved1'].includes(record.status) && (
+          {['pending', 'approved1', 'approved'].includes(record.status) && (
             <>
               <Button type="link" size="small" type="primary" onClick={() => handleApproval(record, 'approved')}>
                 通过
@@ -348,7 +392,7 @@ const ApprovalPage = () => {
         onCancel={() => setDetailModal(false)}
         width={800}
         footer={
-          selectedPlan && ['pending', 'approved1'].includes(selectedPlan.status) ? (
+          selectedPlan && ['pending', 'approved1', 'approved'].includes(selectedPlan.status) ? (
             <Space>
               <Button danger onClick={() => { setDetailModal(false); handleApproval(selectedPlan, 'rejected'); }}>
                 驳回
@@ -421,31 +465,21 @@ const ApprovalPage = () => {
                           {approval.result === 'approved' ? '已通过' : approval.result === 'rejected' ? '已驳回' : '待审批'}
                         </Tag>
                       </div>
-                      <div className="text-sm text-gray-500 mb-1">
-                        <User size={12} className="inline mr-1" />
-                        {approval.approver} · {approval.approvalTime}
-                      </div>
+                      {approval.approver && (
+                        <div className="text-sm text-gray-500 mb-1">
+                          <User size={12} className="inline mr-1" />
+                          {approval.approver} · {approval.approvalTime}
+                        </div>
+                      )}
                       {approval.opinion && (
                         <div className="text-sm bg-gray-50 rounded p-2 mt-2">{approval.opinion}</div>
                       )}
+                      {approval.result === 'pending' && !approval.approver && (
+                        <div className="text-sm text-gray-400">等待审批...</div>
+                      )}
                     </div>
                   ),
-                })).concat(
-                  selectedPlan.status !== 'rejected' && getApprovalLevel(selectedPlan.status).level < 3 ? [
-                    {
-                      color: 'gray',
-                      dot: <ArrowRight size={14} />,
-                      children: (
-                        <div className="pb-2">
-                          <div className="font-medium text-gray-500">
-                            {getApprovalLevel(selectedPlan.status).level === 1 ? '段级审批' : '调度审批'}
-                          </div>
-                          <div className="text-sm text-gray-400">等待审批...</div>
-                        </div>
-                      ),
-                    }
-                  ] : []
-                )}
+                }))}
               />
             </div>
           </div>

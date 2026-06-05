@@ -120,21 +120,7 @@ const ApplicationPage = () => {
       const validMachines = machines.filter(m => m.name);
 
       if (validWorkers.length === 0 && validMachines.length === 0) {
-        message.error('请至少添加一名作业人员或一台施工机具');
-        setCurrentStep(2);
-        setSubmitting(false);
-        return;
-      }
-
-      if (validWorkers.length === 0) {
-        message.error('请至少添加一名作业人员');
-        setCurrentStep(2);
-        setSubmitting(false);
-        return;
-      }
-
-      if (validMachines.length === 0) {
-        message.error('请至少添加一台施工机具');
+        message.error('请填写有效的作业人员或施工机具信息（空白行不算有效数据）');
         setCurrentStep(2);
         setSubmitting(false);
         return;
