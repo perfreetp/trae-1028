@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Card,
   Table,
@@ -34,11 +35,13 @@ import type { SkyPlan } from '../types';
 
 const ExecutionPage = () => {
   const { plans, updateExistingPlan } = useAppStore();
+  const navigate = useNavigate();
   const [selectedPlan, setSelectedPlan] = useState<SkyPlan | null>(null);
   const [detailModal, setDetailModal] = useState(false);
   const [actionModal, setActionModal] = useState(false);
   const [actionType, setActionType] = useState<'command' | 'signin' | 'signout'>('command');
   const [currentTime, setCurrentTime] = useState(dayjs());
+  const [signoutSuccessModal, setSignoutSuccessModal] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(dayjs()), 1000);
@@ -109,7 +112,10 @@ const ExecutionPage = () => {
       case 'signout':
         updates = { status: 'signout', signoutTime: now };
         message.success('销记确认成功');
-        break;
+        updateExistingPlan(selectedPlan.id, updates);
+        setActionModal(false);
+        setSignoutSuccessModal(true);
+        return;
     }
     
     updateExistingPlan(selectedPlan.id, updates);
@@ -496,6 +502,44 @@ const ExecutionPage = () => {
             )}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        title="施工完成"
+        open={signoutSuccessModal}
+        onCancel={() => setSignoutSuccessModal(false)}
+        footer={
+          <Space>
+            <Button onClick={() => setSignoutSuccessModal(false)}>
+              留在本页
+            </Button>
+            <Button 
+              type="primary" 
+              onClick={() => {
+                setSignoutSuccessModal(false);
+                navigate('/archive');
+              }}
+            >
+              前往资料归档
+            </Button>
+          </Space>
+        }
+      >
+        <div className="text-center py-6">
+          <div className="text-5xl mb-4">🎉</div>
+          <div className="text-lg font-semibold mb-2">销记完成</div>
+          <div className="text-gray-500 mb-4">
+            施工计划已完成销记，现在可以上传相关资料进行归档
+          </div>
+          {selectedPlan && (
+            <div className="bg-gray-50 rounded-lg p-4 text-left">
+              <div className="font-medium mb-1">{selectedPlan.projectName}</div>
+              <div className="text-sm text-gray-500">
+                销记时间：{selectedPlan.signoutTime}
+              </div>
+            </div>
+          )}
+        </div>
       </Modal>
     </div>
   );

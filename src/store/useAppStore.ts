@@ -65,6 +65,7 @@ interface AppState {
 
   addArchive: (archive: Omit<ArchiveFile, 'id'>) => ArchiveFile;
   getArchivesByPlanId: (planId: string) => ArchiveFile[];
+  removeArchive: (id: string) => boolean;
 
   getProtectionChecks: (planId: string) => ProtectionCheckItem[];
   toggleProtectionCheck: (planId: string, checkId: string) => void;
@@ -218,9 +219,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   addArchive: (archive) => {
+    const existingFiles = get().archives.filter(
+      a => a.planId === archive.planId && a.fileName === archive.fileName
+    );
+    const version = existingFiles.length > 0 
+      ? Math.max(...existingFiles.map(f => f.version || 1)) + 1 
+      : 1;
+    
     const newArchive: ArchiveFile = {
       ...archive,
       id: generateId(),
+      version,
     };
     const archives = [...get().archives, newArchive];
     saveToStorage('archives', archives);
@@ -230,6 +239,16 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   getArchivesByPlanId: (planId) => {
     return get().archives.filter(a => a.planId === planId);
+  },
+
+  removeArchive: (id) => {
+    const archives = get().archives.filter(a => a.id !== id);
+    if (archives.length === get().archives.length) {
+      return false;
+    }
+    saveToStorage('archives', archives);
+    set({ archives });
+    return true;
   },
 
   getProtectionChecks: (planId) => {

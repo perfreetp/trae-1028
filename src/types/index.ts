@@ -76,6 +76,7 @@ export interface ArchiveFile {
   uploadTime: string;
   description?: string;
   category?: string;
+  version?: number;
 }
 
 export interface SkyPlan {

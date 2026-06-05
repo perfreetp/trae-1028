@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Card,
   Table,
@@ -19,7 +19,9 @@ import {
   Progress,
   List,
   Avatar,
-  Tooltip,
+  Popconfirm,
+  Badge,
+  Empty,
 } from 'antd';
 import {
   Archive,
@@ -36,6 +38,9 @@ import {
   FileSpreadsheet,
   Calendar,
   Search,
+  Trash2,
+  Clock,
+  Layers,
 } from 'lucide-react';
 import ReactECharts from 'echarts-for-react';
 import dayjs from 'dayjs';
@@ -55,8 +60,26 @@ const categoryMap: Record<string, string> = {
   other: '其他资料',
 };
 
+const categoryColorMap: Record<string, string> = {
+  plan: 'blue',
+  record: 'green',
+  check: 'orange',
+  accept: 'purple',
+  photo: 'cyan',
+  other: 'default',
+};
+
 const ArchivePage = () => {
-  const { plans, addArchive, getArchivesByPlanId, currentUser, archives } = useAppStore();
+  const { 
+    plans, 
+    addArchive, 
+    getArchivesByPlanId, 
+    currentUser, 
+    archives,
+    removeArchive,
+    updateExistingPlan,
+  } = useAppStore();
+  
   const [activeTab, setActiveTab] = useState('stats');
   const [selectedMonth, setSelectedMonth] = useState(dayjs());
   const [detailModal, setDetailModal] = useState(false);
@@ -65,11 +88,25 @@ const ArchivePage = () => {
   const [uploading, setUploading] = useState(false);
   const [fileList, setFileList] = useState<any[]>([]);
   const [form] = Form.useForm();
+  const [detailCategory, setDetailCategory] = useState<string>('all');
+  const [filterCategory, setFilterCategory] = useState<string | undefined>(undefined);
+  const [detailModalVisible, setDetailModalVisible] = useState<SkyPlan | null>(null);
 
   const archivedPlans = useMemo(() => 
     plans.filter(p => ['signout', 'completed', 'archived'].includes(p.status)),
     [plans]
   );
+
+  const filteredPlans = useMemo(() => {
+    let result = archivedPlans;
+    if (filterCategory) {
+      result = result.filter(p => {
+        const planFiles = getArchivesByPlanId(p.id);
+        return planFiles.some(f => f.category === filterCategory);
+      });
+    }
+    return result;
+  }, [archivedPlans, filterCategory, getArchivesByPlanId]);
 
   const monthlyStats = useMemo(() => {
     const monthStr = selectedMonth.format('YYYY-MM');
@@ -80,13 +117,14 @@ const ArchivePage = () => {
     const canceled = monthPlans.filter(p => p.status === 'rejected').length;
     const fulfillmentRate = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-    const dailyData: { date: string; total: number; completed: number }[] = [];
+    const dailyData: { date: string; dateStr: string; total: number; completed: number }[] = [];
     const daysInMonth = selectedMonth.daysInMonth();
     for (let i = 1; i <= daysInMonth; i++) {
       const dayStr = `${monthStr}-${String(i).padStart(2, '0')}`;
       const dayPlans = monthPlans.filter(p => p.applyDate === dayStr);
       dailyData.push({
         date: `${i}日`,
+        dateStr: dayStr,
         total: dayPlans.length,
         completed: dayPlans.filter(p => ['signout', 'completed', 'archived'].includes(p.status)).length,
       });
@@ -103,20 +141,70 @@ const ArchivePage = () => {
       count: monthPlans.filter(p => p.lineSection === line).length,
     }));
 
-    return { total, completed, canceled, fulfillmentRate, dailyData, typeStats, lineStats };
+    return { total, completed, canceled, fulfillmentRate, dailyData, typeStats, lineStats, monthPlans };
   }, [plans, selectedMonth]);
 
   const planArchiveFiles = useMemo(() => {
     if (!selectedPlan) return [];
     return getArchivesByPlanId(selectedPlan.id);
-  }, [selectedPlan, getArchivesByPlanId, archives, detailModal]);
+  }, [selectedPlan, getArchivesByPlanId, archives]);
+
+  const filesByCategory = useMemo(() => {
+    const groups: Record<string, ArchiveFile[]> = {};
+    for (const file of planArchiveFiles) {
+      const cat = file.category || 'other';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(file);
+    }
+    return groups;
+  }, [planArchiveFiles]);
+
+  const filesByName = useMemo(() => {
+    const groups: Record<string, ArchiveFile[]> = {};
+    for (const file of planArchiveFiles) {
+      if (!groups[file.fileName]) groups[file.fileName] = [];
+      groups[file.fileName].push(file);
+    }
+    Object.keys(groups).forEach(name => {
+      groups[name].sort((a, b) => (b.version || 1) - (a.version || 1));
+    });
+    return groups;
+  }, [planArchiveFiles]);
+
+  const displayFiles = useMemo(() => {
+    if (detailCategory === 'all') {
+      return planArchiveFiles;
+    }
+    return planArchiveFiles.filter(f => f.category === detailCategory);
+  }, [planArchiveFiles, detailCategory]);
+
+  const categoryTabs = useMemo(() => {
+    const tabs = [{ key: 'all', label: '全部', count: planArchiveFiles.length }];
+    Object.keys(filesByCategory).forEach(cat => {
+      tabs.push({
+        key: cat,
+        label: categoryMap[cat] || cat,
+        count: filesByCategory[cat].length,
+      });
+    });
+    return tabs;
+  }, [filesByCategory, planArchiveFiles.length]);
 
   const handlePreview = (file: ArchiveFile) => {
-    message.info(`正在预览：${file.fileName}`);
+    message.info(`正在预览：${file.fileName}${file.version ? `（v${file.version}）` : ''}`);
   };
 
   const handleDownload = (file: ArchiveFile) => {
-    message.success(`已开始下载：${file.fileName}`);
+    message.success(`已开始下载：${file.fileName}${file.version ? `（v${file.version}）` : ''}`);
+  };
+
+  const handleDelete = (file: ArchiveFile) => {
+    const success = removeArchive(file.id);
+    if (success) {
+      message.success('删除成功');
+    } else {
+      message.error('删除失败');
+    }
   };
 
   const handleUploadSubmit = async () => {
@@ -147,15 +235,23 @@ const ArchivePage = () => {
         });
       }
 
+      const plan = plans.find(p => p.id === planId);
+      if (plan && plan.status !== 'archived') {
+        const allFiles = getArchivesByPlanId(planId);
+        if (allFiles.length >= 2) {
+          updateExistingPlan(planId, { status: 'archived' });
+        }
+      }
+
       message.success(`成功上传 ${fileList.length} 个文件`);
       setUploadModal(false);
       setFileList([]);
       form.resetFields();
 
       if (wasFromDetail) {
-        const plan = plans.find(p => p.id === planId);
-        if (plan) {
-          setSelectedPlan({ ...plan });
+        const updatedPlan = plans.find(p => p.id === planId);
+        if (updatedPlan) {
+          setSelectedPlan({ ...updatedPlan });
           setTimeout(() => setDetailModal(true), 150);
         }
       }
@@ -184,6 +280,7 @@ const ArchivePage = () => {
 
   const handleViewDetail = (plan: SkyPlan) => {
     setSelectedPlan(plan);
+    setDetailCategory('all');
     setDetailModal(true);
   };
 
@@ -196,6 +293,10 @@ const ArchivePage = () => {
 
   const handleExport = () => {
     message.success('报表已导出');
+  };
+
+  const showDetailModal = (plan: SkyPlan) => {
+    setDetailModalVisible(plan);
   };
 
   const fulfillmentChartOption = {
@@ -234,6 +335,17 @@ const ArchivePage = () => {
         itemStyle: { color: '#165DFF' },
       },
     ],
+  };
+
+  const fulfillmentChartEvents = {
+    click: (params: any) => {
+      if (params.componentType === 'series') {
+        const dateIndex = params.dataIndex;
+        const dayData = monthlyStats.dailyData[dateIndex];
+        const dayPlans = monthlyStats.monthPlans.filter(p => p.applyDate === dayData.dateStr);
+        setDetailModalVisible(dayPlans[0] || null);
+      }
+    },
   };
 
   const typeChartOption = {
@@ -277,6 +389,17 @@ const ArchivePage = () => {
     ],
   };
 
+  const typeChartEvents = {
+    click: (params: any) => {
+      if (params.name) {
+        const typePlans = monthlyStats.monthPlans.filter(p => p.constructionType === params.name);
+        if (typePlans.length > 0) {
+          setDetailModalVisible(typePlans[0]);
+        }
+      }
+    },
+  };
+
   const archiveColumns = useMemo(() => [
     {
       title: '项目名称',
@@ -317,9 +440,10 @@ const ArchivePage = () => {
       title: '资料数量',
       key: 'fileCount',
       width: 100,
-      render: (_: any, record: SkyPlan) => (
-        <Tag color="blue">{getArchivesByPlanId(record.id).length} 份</Tag>
-      ),
+      render: (_: any, record: SkyPlan) => {
+        const count = getArchivesByPlanId(record.id).length;
+        return <Tag color={count > 0 ? 'blue' : 'default'}>{count} 份</Tag>;
+      },
     },
     {
       title: '归档时间',
@@ -343,6 +467,42 @@ const ArchivePage = () => {
             上传
           </Button>
         </Space>
+      ),
+    },
+  ], [getArchivesByPlanId, archives]);
+
+  const detailColumns = useMemo(() => [
+    {
+      title: '项目名称',
+      dataIndex: 'projectName',
+      render: (text: string) => <span className="font-medium">{text}</span>,
+    },
+    {
+      title: '施工单位',
+      dataIndex: 'constructionUnit',
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      render: (status: SkyPlan['status']) => (
+        <Tag color={statusMap[status].color as any}>{statusMap[status].label}</Tag>
+      ),
+    },
+    {
+      title: '是否归档',
+      key: 'archived',
+      render: (_: any, record: SkyPlan) => {
+        const count = getArchivesByPlanId(record.id).length;
+        return count >= 2 
+          ? <Tag color="success">已归档</Tag> 
+          : <Tag color="warning">未归档</Tag>;
+      },
+    },
+    {
+      title: '资料数量',
+      key: 'fileCount',
+      render: (_: any, record: SkyPlan) => (
+        <Tag color="blue">{getArchivesByPlanId(record.id).length} 份</Tag>
       ),
     },
   ], [getArchivesByPlanId, archives]);
@@ -419,13 +579,21 @@ const ArchivePage = () => {
 
           <Row gutter={16}>
             <Col span={16}>
-              <Card title="每日计划完成情况">
-                <ReactECharts option={fulfillmentChartOption} style={{ height: 350 }} />
+              <Card title="每日计划完成情况（点击柱状图查看明细）">
+                <ReactECharts 
+                  option={fulfillmentChartOption} 
+                  style={{ height: 350 }} 
+                  onEvents={fulfillmentChartEvents}
+                />
               </Card>
             </Col>
             <Col span={8}>
-              <Card title="施工类型分布">
-                <ReactECharts option={typeChartOption} style={{ height: 350 }} />
+              <Card title="施工类型分布（点击饼图查看明细）">
+                <ReactECharts 
+                  option={typeChartOption} 
+                  style={{ height: 350 }}
+                  onEvents={typeChartEvents}
+                />
               </Card>
             </Col>
           </Row>
@@ -455,6 +623,14 @@ const ArchivePage = () => {
         <div>
           <div className="flex justify-between items-center mb-4">
             <div className="flex items-center gap-4">
+              <Select placeholder="资料类型" style={{ width: 150 }} allowClear onChange={setFilterCategory}>
+                <Option value="plan">施工方案</Option>
+                <Option value="record">施工记录</Option>
+                <Option value="check">检查记录</Option>
+                <Option value="accept">验收报告</Option>
+                <Option value="photo">现场照片</Option>
+                <Option value="other">其他资料</Option>
+              </Select>
               <Select placeholder="施工类型" style={{ width: 150 }} allowClear>
                 {constructionTypes.map(type => (
                   <Option key={type} value={type}>{type}</Option>
@@ -471,7 +647,7 @@ const ArchivePage = () => {
           </div>
           <Table
             columns={archiveColumns}
-            dataSource={archivedPlans}
+            dataSource={filteredPlans}
             rowKey="id"
             pagination={{ pageSize: 10 }}
             scroll={{ x: 1200 }}
@@ -490,8 +666,11 @@ const ArchivePage = () => {
       <Modal
         title="档案详情"
         open={detailModal}
-        onCancel={() => setDetailModal(false)}
-        width={800}
+        onCancel={() => {
+          setDetailModal(false);
+          setSelectedPlan(null);
+        }}
+        width={850}
         footer={null}
       >
         {selectedPlan && (
@@ -501,6 +680,9 @@ const ArchivePage = () => {
                 {statusMap[selectedPlan.status].label}
               </Tag>
               <span className="font-semibold text-lg">{selectedPlan.projectName}</span>
+              {planArchiveFiles.length >= 2 && (
+                <Badge status="success" text="已归档" />
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-4 text-sm">
@@ -529,39 +711,148 @@ const ArchivePage = () => {
                   上传资料
                 </Button>
               </div>
-              <List
-                dataSource={planArchiveFiles}
-                locale={{ emptyText: '暂无归档资料，请点击上方按钮上传' }}
-                renderItem={file => (
-                  <List.Item
-                    actions={[
-                      <Button type="link" size="small" icon={<Eye size={14} />} onClick={() => handlePreview(file)}>预览</Button>,
-                      <Button type="link" size="small" icon={<Download size={14} />} onClick={() => handleDownload(file)}>下载</Button>,
-                    ]}
-                  >
-                    <List.Item.Meta
-                      avatar={<Avatar icon={getFileIcon(file.fileType)} style={{ backgroundColor: 'transparent' }} />}
-                      title={
-                        <div className="flex items-center gap-2">
-                          <span>{file.fileName}</span>
-                          {file.category && (
-                            <Tag color="blue" size="small">{categoryMap[file.category] || file.category}</Tag>
-                          )}
-                        </div>
-                      }
-                      description={
-                        <div className="text-sm text-gray-500 flex items-center gap-4 flex-wrap">
-                          <span>{formatFileSize(file.fileSize)}</span>
-                          <span>上传人：{file.uploader}</span>
-                          <span>{file.uploadTime}</span>
-                          {file.description && <span className="text-gray-400">备注：{file.description}</span>}
-                        </div>
-                      }
-                    />
-                  </List.Item>
-                )}
+
+              <Tabs 
+                activeKey={detailCategory} 
+                onChange={setDetailCategory}
+                size="small"
+                items={categoryTabs.map(tab => ({
+                  key: tab.key,
+                  label: (
+                    <span className="flex items-center gap-1">
+                      {tab.key !== 'all' && <Layers size={12} />}
+                      {tab.label}
+                      <Tag color={tab.key !== 'all' ? categoryColorMap[tab.key] : 'blue'} size="small">{tab.count}</Tag>
+                    </span>
+                  ),
+                }))}
               />
+
+              {displayFiles.length === 0 ? (
+                <Empty description="暂无该类型资料" className="py-8" />
+              ) : (
+                <List
+                  dataSource={displayFiles}
+                  locale={{ emptyText: '暂无归档资料，请点击上方按钮上传' }}
+                  renderItem={file => (
+                    <List.Item
+                      actions={[
+                        <Button type="link" size="small" icon={<Eye size={14} />} onClick={() => handlePreview(file)}>预览</Button>,
+                        <Button type="link" size="small" icon={<Download size={14} />} onClick={() => handleDownload(file)}>下载</Button>,
+                        <Popconfirm
+                          title="确认删除该文件？"
+                          description="删除后无法恢复"
+                          onConfirm={() => handleDelete(file)}
+                          okText="删除"
+                          cancelText="取消"
+                        >
+                          <Button type="link" size="small" danger icon={<Trash2 size={14} />}>删除</Button>
+                        </Popconfirm>,
+                      ]}
+                    >
+                      <List.Item.Meta
+                        avatar={<Avatar icon={getFileIcon(file.fileType)} style={{ backgroundColor: 'transparent' }} />}
+                        title={
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span>{file.fileName}</span>
+                            {file.category && (
+                              <Tag color={categoryColorMap[file.category] || 'blue'} size="small">
+                                {categoryMap[file.category] || file.category}
+                              </Tag>
+                            )}
+                            {file.version && file.version > 1 && (
+                              <Tag color="orange" size="small">v{file.version}</Tag>
+                            )}
+                          </div>
+                        }
+                        description={
+                          <div className="text-sm text-gray-500 flex items-center gap-4 flex-wrap">
+                            <span>{formatFileSize(file.fileSize)}</span>
+                            <span>上传人：{file.uploader}</span>
+                            <span className="flex items-center gap-1">
+                              <Clock size={12} />
+                              {file.uploadTime}
+                            </span>
+                            {file.description && <span className="text-gray-400">备注：{file.description}</span>}
+                          </div>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+              )}
+
+              {Object.keys(filesByName).some(name => filesByName[name].length > 1) && (
+                <div className="mt-6 pt-4 border-t">
+                  <h5 className="font-medium mb-3 flex items-center gap-2">
+                    <Layers size={16} />
+                    版本记录
+                  </h5>
+                  <List
+                    size="small"
+                    dataSource={Object.entries(filesByName).filter(([_, files]) => files.length > 1)}
+                    renderItem={[fileName, versions] => (
+                      <List.Item>
+                        <List.Item.Meta
+                          title={
+                            <div className="flex items-center gap-2">
+                              <FileText size={14} className="text-blue-500" />
+                              <span className="font-medium">{fileName}</span>
+                              <Tag color="orange">{versions.length} 个版本</Tag>
+                            </div>
+                          }
+                          description={
+                            <div className="space-y-1 mt-2">
+                              {versions.map((v, idx) => (
+                                <div key={v.id} className="flex items-center gap-3 text-xs bg-gray-50 p-2 rounded">
+                                  <Tag color={idx === 0 ? 'green' : 'default'} size="small">
+                                    v{v.version || 1}{idx === 0 && '（最新）'}
+                                  </Tag>
+                                  <span className="text-gray-500">
+                                    {v.uploader} · {v.uploadTime}
+                                  </span>
+                                  {v.description && <span className="text-gray-400">| {v.description}</span>}
+                                  <Space className="ml-auto">
+                                    <Button size="small" type="text" onClick={() => handlePreview(v)}>预览</Button>
+                                    <Button size="small" type="text" onClick={() => handleDownload(v)}>下载</Button>
+                                  </Space>
+                                </div>
+                              ))}
+                            </div>
+                          }
+                        />
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              )}
             </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        title="计划明细"
+        open={detailModalVisible !== null}
+        onCancel={() => setDetailModalVisible(null)}
+        width={900}
+        footer={null}
+      >
+        {detailModalVisible && (
+          <div className="space-y-4">
+            <div className="text-lg font-semibold">
+              {detailModalVisible.projectName} - 相关计划
+            </div>
+            <Table
+              columns={detailColumns}
+              dataSource={plans.filter(p => 
+                p.applyDate.startsWith(detailModalVisible.applyDate.substring(0, 7)) ||
+                p.constructionType === detailModalVisible.constructionType
+              ).slice(0, 10)}
+              rowKey="id"
+              pagination={false}
+              size="small"
+            />
           </div>
         )}
       </Modal>
@@ -599,22 +890,22 @@ const ArchivePage = () => {
           >
             <Input.TextArea rows={3} placeholder="请输入资料说明（选填）" />
           </Form.Item>
-          <Form.Item label="上传文件">
+          <Form.Item label="上传文件（支持多选）">
             <Upload.Dragger
               multiple
               fileList={fileList}
               beforeUpload={(file) => {
-                setFileList([...fileList, file]);
+                setFileList(prev => [...prev, file]);
                 return false;
               }}
               onRemove={(file) => {
-                setFileList(fileList.filter(f => f.uid !== file.uid));
+                setFileList(prev => prev.filter(f => f.uid !== file.uid));
               }}
             >
               <p className="ant-upload-drag-icon">
                 <UploadIcon size={48} className="text-blue-500" />
               </p>
-              <p className="ant-upload-text">点击或拖拽文件到此处上传</p>
+              <p className="ant-upload-text">点击或拖拽文件到此处上传（支持多选）</p>
               <p className="ant-upload-hint">支持 PDF、Word、Excel、图片等格式</p>
             </Upload.Dragger>
           </Form.Item>
