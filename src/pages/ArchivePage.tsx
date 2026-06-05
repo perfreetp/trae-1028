@@ -128,7 +128,7 @@ const ArchivePage = () => {
       }
 
       setUploading(true);
-      const wasFromDetail = detailModal || selectedPlan;
+      const wasFromDetail = selectedPlan !== null;
       const planId = selectedPlan!.id;
 
       for (const file of fileList) {
@@ -147,7 +147,7 @@ const ArchivePage = () => {
         });
       }
 
-      message.success('上传成功');
+      message.success(`成功上传 ${fileList.length} 个文件`);
       setUploadModal(false);
       setFileList([]);
       form.resetFields();
@@ -155,8 +155,8 @@ const ArchivePage = () => {
       if (wasFromDetail) {
         const plan = plans.find(p => p.id === planId);
         if (plan) {
-          setSelectedPlan(plan);
-          setTimeout(() => setDetailModal(true), 100);
+          setSelectedPlan({ ...plan });
+          setTimeout(() => setDetailModal(true), 150);
         }
       }
     } catch (error) {
@@ -189,6 +189,7 @@ const ArchivePage = () => {
 
   const handleUpload = (plan: SkyPlan) => {
     setSelectedPlan(plan);
+    setFileList([]);
     form.resetFields();
     setUploadModal(true);
   };
@@ -568,7 +569,11 @@ const ArchivePage = () => {
       <Modal
         title="上传资料"
         open={uploadModal}
-        onCancel={() => { setUploadModal(false); setFileList([]); }}
+        onCancel={() => { 
+          setUploadModal(false); 
+          setFileList([]); 
+          form.resetFields();
+        }}
         onOk={handleUploadSubmit}
         okText="上传"
         confirmLoading={uploading}

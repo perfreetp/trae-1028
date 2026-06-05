@@ -116,11 +116,15 @@ const ApplicationPage = () => {
       setSubmitting(true);
       const values = await form.validateFields();
 
-      const validWorkers = workers.filter(w => w.name && w.position);
-      const validMachines = machines.filter(m => m.name);
+      const validWorkers = workers.filter(w => 
+        w.name && w.name.trim() && w.position && w.position.trim()
+      );
+      const validMachines = machines.filter(m => 
+        m.name && m.name.trim()
+      );
 
       if (validWorkers.length === 0 && validMachines.length === 0) {
-        message.error('请填写有效的作业人员或施工机具信息（空白行不算有效数据）');
+        message.error('请填写有效的作业人员或施工机具信息（空白行或仅空格不算有效数据）');
         setCurrentStep(2);
         setSubmitting(false);
         return;

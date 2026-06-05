@@ -167,7 +167,7 @@ const ApprovalPage = () => {
   };
 
   const handleApproval = (plan: SkyPlan, type: 'approved' | 'rejected') => {
-    setSelectedPlan(plan);
+    setSelectedPlan({ ...plan });
     setApprovalType(type);
     form.resetFields();
     setApprovalModal(true);
@@ -195,6 +195,7 @@ const ApprovalPage = () => {
           status: 'rejected',
         });
         message.success(`${levelName}已驳回`);
+        setActiveTab('rejected');
       } else {
         const commandNo = level === 3
           ? `SKY${dayjs().format('YYYYMMDD')}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`
@@ -206,10 +207,14 @@ const ApprovalPage = () => {
           ...(commandNo ? { commandNo } : {}),
         });
         message.success(`${levelName}已通过`);
+        if (level === 3) {
+          setActiveTab('approved');
+        }
       }
 
       setApprovalModal(false);
       setDetailModal(false);
+      setSelectedPlan(null);
     } catch (error) {
       message.error('操作失败');
     } finally {
@@ -389,7 +394,12 @@ const ApprovalPage = () => {
       <Modal
         title="计划详情"
         open={detailModal}
-        onCancel={() => setDetailModal(false)}
+        onCancel={() => {
+          setDetailModal(false);
+          if (!approvalModal) {
+            setSelectedPlan(null);
+          }
+        }}
         width={800}
         footer={
           selectedPlan && ['pending', 'approved1', 'approved'].includes(selectedPlan.status) ? (
@@ -489,7 +499,10 @@ const ApprovalPage = () => {
       <Modal
         title={approvalType === 'approved' ? '审批通过' : '审批驳回'}
         open={approvalModal}
-        onCancel={() => setApprovalModal(false)}
+        onCancel={() => {
+          setApprovalModal(false);
+          setSelectedPlan(null);
+        }}
         onOk={handleSubmitApproval}
         confirmLoading={submitting}
         okText={approvalType === 'approved' ? '确认通过' : '确认驳回'}
