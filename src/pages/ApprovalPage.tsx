@@ -10,13 +10,12 @@ import {
   Space,
   Tabs,
   Badge,
-  Timeline,
   message,
-  Avatar,
-  Tooltip,
+  Timeline,
   Row,
   Col,
   Statistic,
+  Tooltip,
 } from 'antd';
 import {
   Check,
@@ -37,7 +36,7 @@ import type { SkyPlan, ApprovalRecord } from '../types';
 const { TextArea } = Input;
 
 const ApprovalPage = () => {
-  const { plans, updateExistingPlan } = useAppStore();
+  const { plans, updateExistingPlan, addApproval, getApprovalsByPlanId, currentUser } = useAppStore();
   const [activeTab, setActiveTab] = useState('pending');
   const [selectedPlan, setSelectedPlan] = useState<SkyPlan | null>(null);
   const [detailModal, setDetailModal] = useState(false);
@@ -52,16 +51,22 @@ const ApprovalPage = () => {
 
   const getApprovalLevel = (status: SkyPlan['status']) => {
     switch (status) {
-      case 'pending': return { level: 1, levelName: '车间审批' };
-      case 'approved1': return { level: 2, levelName: '段级审批' };
-      default: return { level: 3, levelName: '调度审批' };
+      case 'pending': return { level: 1, levelName: '车间审批', nextStatus: 'approved1' as SkyPlan['status'] };
+      case 'approved1': return { level: 2, levelName: '段级审批', nextStatus: 'approved' as SkyPlan['status'] };
+      case 'approved': return { level: 3, levelName: '调度审批', nextStatus: 'commanded' as SkyPlan['status'] };
+      default: return { level: 3, levelName: '调度审批', nextStatus: 'commanded' as SkyPlan['status'] };
     }
   };
 
-  const mockApprovals = (plan: SkyPlan): ApprovalRecord[] => {
-    const records: ApprovalRecord[] = [];
+  const getApprovalList = (plan: SkyPlan): ApprovalRecord[] => {
+    const existingApprovals = getApprovalsByPlanId(plan.id);
+    if (existingApprovals.length > 0) {
+      return existingApprovals.sort((a, b) => a.level - b.level);
+    }
+    
+    const approvals: ApprovalRecord[] = [];
     if (plan.status !== 'pending') {
-      records.push({
+      approvals.push({
         id: '1',
         planId: plan.id,
         level: 1,
@@ -72,8 +77,8 @@ const ApprovalPage = () => {
         result: 'approved',
       });
     }
-    if (plan.status === 'approved1' || ['approved', 'commanded', 'signin', 'executing', 'signout', 'completed', 'archived'].includes(plan.status)) {
-      records.push({
+    if (['approved1', 'approved', 'commanded', 'signin', 'executing', 'signout', 'completed', 'archived'].includes(plan.status)) {
+      approvals.push({
         id: '2',
         planId: plan.id,
         level: 2,
@@ -85,7 +90,7 @@ const ApprovalPage = () => {
       });
     }
     if (['approved', 'commanded', 'signin', 'executing', 'signout', 'completed', 'archived'].includes(plan.status)) {
-      records.push({
+      approvals.push({
         id: '3',
         planId: plan.id,
         level: 3,
@@ -97,7 +102,8 @@ const ApprovalPage = () => {
       });
     }
     if (plan.status === 'rejected') {
-      records.push({
+      approvals.length = 0;
+      approvals.push({
         id: '1',
         planId: plan.id,
         level: 1,
@@ -108,7 +114,7 @@ const ApprovalPage = () => {
         result: 'rejected',
       });
     }
-    return records;
+    return approvals;
   };
 
   const handleViewDetail = (plan: SkyPlan) => {
@@ -128,26 +134,38 @@ const ApprovalPage = () => {
     try {
       setSubmitting(true);
       const values = await form.validateFields();
-      const { level, levelName } = getApprovalLevel(selectedPlan.status);
+      const { level, levelName, nextStatus } = getApprovalLevel(selectedPlan.status);
       
-      let newStatus: SkyPlan['status'];
-      if (approvalType === 'rejected') {
-        newStatus = 'rejected';
-      } else {
-        if (level === 1) newStatus = 'approved1';
-        else if (level === 2) newStatus = 'approved';
-        else {
-          newStatus = 'commanded';
-        }
-      }
-
-      updateExistingPlan(selectedPlan.id, {
-        status: newStatus,
-        currentApprovalLevel: approvalType === 'rejected' ? level : level + 1,
+      addApproval({
+        planId: selectedPlan.id,
+        level,
+        levelName,
+        approver: currentUser.name,
+        approvalTime: dayjs().format('YYYY-MM-DD HH:mm'),
+        opinion: values.opinion || '',
+        result: approvalType,
       });
 
-      message.success(`${levelName}${approvalType === 'approved' ? '通过' : '驳回'}成功`);
+      if (approvalType === 'rejected') {
+        updateExistingPlan(selectedPlan.id, {
+          status: 'rejected',
+        });
+        message.success(`${levelName}已驳回`);
+      } else {
+        const commandNo = level === 3
+          ? `SKY${dayjs().format('YYYYMMDD')}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`
+          : undefined;
+        
+        updateExistingPlan(selectedPlan.id, {
+          status: nextStatus,
+          currentApprovalLevel: level + 1,
+          ...(commandNo ? { commandNo } : {}),
+        });
+        message.success(`${levelName}已通过`);
+      }
+
       setApprovalModal(false);
+      setDetailModal(false);
     } catch (error) {
       message.error('操作失败');
     } finally {
@@ -226,19 +244,19 @@ const ApprovalPage = () => {
     {
       title: '操作',
       key: 'action',
-      width: 200,
+      width: 220,
       fixed: 'right' as const,
       render: (_: any, record: SkyPlan) => (
-        <Space>
+        <Space size="small">
           <Button type="link" size="small" icon={<Eye size={14} />} onClick={() => handleViewDetail(record)}>
             详情
           </Button>
           {['pending', 'approved1'].includes(record.status) && (
             <>
-              <Button type="link" size="small" icon={<Check size={14} />} onClick={() => handleApproval(record, 'approved')}>
+              <Button type="link" size="small" type="primary" onClick={() => handleApproval(record, 'approved')}>
                 通过
               </Button>
-              <Button type="link" size="small" danger icon={<X size={14} />} onClick={() => handleApproval(record, 'rejected')}>
+              <Button type="link" size="small" danger onClick={() => handleApproval(record, 'rejected')}>
                 驳回
               </Button>
             </>
@@ -258,7 +276,7 @@ const ApprovalPage = () => {
           dataSource={pendingPlans}
           rowKey="id"
           pagination={{ pageSize: 10 }}
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1300 }}
         />
       ),
     },
@@ -271,7 +289,7 @@ const ApprovalPage = () => {
           dataSource={approvedPlans}
           rowKey="id"
           pagination={{ pageSize: 10 }}
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1300 }}
         />
       ),
     },
@@ -284,7 +302,7 @@ const ApprovalPage = () => {
           dataSource={rejectedPlans}
           rowKey="id"
           pagination={{ pageSize: 10 }}
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1300 }}
         />
       ),
     },
@@ -332,10 +350,10 @@ const ApprovalPage = () => {
         footer={
           selectedPlan && ['pending', 'approved1'].includes(selectedPlan.status) ? (
             <Space>
-              <Button danger icon={<X size={16} />} onClick={() => { setDetailModal(false); handleApproval(selectedPlan, 'rejected'); }}>
+              <Button danger onClick={() => { setDetailModal(false); handleApproval(selectedPlan, 'rejected'); }}>
                 驳回
               </Button>
-              <Button type="primary" icon={<Check size={16} />} onClick={() => { setDetailModal(false); handleApproval(selectedPlan, 'approved'); }}>
+              <Button type="primary" onClick={() => { setDetailModal(false); handleApproval(selectedPlan, 'approved'); }}>
                 通过
               </Button>
             </Space>
@@ -392,7 +410,7 @@ const ApprovalPage = () => {
             <div>
               <h4 className="font-medium mb-3">审批流程</h4>
               <Timeline
-                items={mockApprovals(selectedPlan).map(approval => ({
+                items={getApprovalList(selectedPlan).map(approval => ({
                   color: approval.result === 'approved' ? 'green' : approval.result === 'rejected' ? 'red' : 'blue',
                   dot: approval.result === 'approved' ? <Check size={14} /> : approval.result === 'rejected' ? <X size={14} /> : <Clock size={14} />,
                   children: (
@@ -404,7 +422,7 @@ const ApprovalPage = () => {
                         </Tag>
                       </div>
                       <div className="text-sm text-gray-500 mb-1">
-                        <Avatar size={20} icon={<User size={12} />} className="mr-1" />
+                        <User size={12} className="inline mr-1" />
                         {approval.approver} · {approval.approvalTime}
                       </div>
                       {approval.opinion && (
@@ -442,6 +460,7 @@ const ApprovalPage = () => {
         confirmLoading={submitting}
         okText={approvalType === 'approved' ? '确认通过' : '确认驳回'}
         okButtonProps={{ danger: approvalType === 'rejected' }}
+        width={520}
       >
         {selectedPlan && (
           <Form form={form} layout="vertical">
@@ -457,9 +476,11 @@ const ApprovalPage = () => {
             <Form.Item
               name="opinion"
               label={approvalType === 'approved' ? '审批意见' : '驳回原因'}
-              rules={[{ required: true, message: `请输入${approvalType === 'approved' ? '审批意见' : '驳回原因'}` }]}
+              rules={[
+                { required: approvalType === 'rejected', message: `请输入${approvalType === 'approved' ? '审批意见' : '驳回原因'}` },
+              ]}
             >
-              <TextArea rows={4} placeholder={approvalType === 'approved' ? '请输入审批意见（选填）' : '请输入驳回原因'} />
+              <TextArea rows={4} placeholder={approvalType === 'approved' ? '请输入审批意见（选填）' : '请输入驳回原因（必填）'} />
             </Form.Item>
           </Form>
         )}

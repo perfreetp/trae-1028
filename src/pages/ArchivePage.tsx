@@ -47,13 +47,16 @@ const { RangePicker } = DatePicker;
 const { Option } = Select;
 
 const ArchivePage = () => {
-  const { plans } = useAppStore();
+  const { plans, addArchive, getArchivesByPlanId, currentUser } = useAppStore();
   const [activeTab, setActiveTab] = useState('stats');
   const [selectedMonth, setSelectedMonth] = useState(dayjs());
   const [detailModal, setDetailModal] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<SkyPlan | null>(null);
   const [uploadModal, setUploadModal] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [fileList, setFileList] = useState<any[]>([]);
   const [form] = Form.useForm();
+  const [, forceUpdate] = useState({});
 
   const archivedPlans = useMemo(() => 
     plans.filter(p => ['signout', 'completed', 'archived'].includes(p.status)),
@@ -95,46 +98,56 @@ const ArchivePage = () => {
     return { total, completed, canceled, fulfillmentRate, dailyData, typeStats, lineStats };
   }, [plans, selectedMonth]);
 
-  const mockArchiveFiles = (planId: string): ArchiveFile[] => {
-    const files: ArchiveFile[] = [
-      {
-        id: '1',
-        planId,
-        fileName: '施工方案.pdf',
-        fileType: 'pdf',
-        fileSize: 2048000,
-        uploader: '张三',
-        uploadTime: dayjs().subtract(3, 'day').format('YYYY-MM-DD HH:mm'),
-      },
-      {
-        id: '2',
-        planId,
-        fileName: '安全技术交底记录.xlsx',
-        fileType: 'xlsx',
-        fileSize: 102400,
-        uploader: '李四',
-        uploadTime: dayjs().subtract(2, 'day').format('YYYY-MM-DD HH:mm'),
-      },
-      {
-        id: '3',
-        planId,
-        fileName: '现场照片.jpg',
-        fileType: 'jpg',
-        fileSize: 3072000,
-        uploader: '王五',
-        uploadTime: dayjs().subtract(1, 'day').format('YYYY-MM-DD HH:mm'),
-      },
-      {
-        id: '4',
-        planId,
-        fileName: '验收报告.docx',
-        fileType: 'docx',
-        fileSize: 512000,
-        uploader: '张三',
-        uploadTime: dayjs().format('YYYY-MM-DD HH:mm'),
-      },
-    ];
-    return files;
+  const planArchiveFiles = useMemo(() => {
+    if (!selectedPlan) return [];
+    return getArchivesByPlanId(selectedPlan.id);
+  }, [selectedPlan, getArchivesByPlanId, detailModal]);
+
+  const handlePreview = (file: ArchiveFile) => {
+    message.info(`正在预览：${file.fileName}`);
+  };
+
+  const handleDownload = (file: ArchiveFile) => {
+    message.success(`已开始下载：${file.fileName}`);
+  };
+
+  const handleUploadSubmit = async () => {
+    try {
+      const values = await form.validateFields();
+      if (fileList.length === 0) {
+        message.error('请选择要上传的文件');
+        return;
+      }
+
+      setUploading(true);
+
+      for (const file of fileList) {
+        const fileName = file.name;
+        const fileExt = fileName.split('.').pop()?.toLowerCase() || 'other';
+        
+        addArchive({
+          planId: selectedPlan!.id,
+          fileName,
+          fileType: fileExt,
+          fileSize: file.size || 102400,
+          uploader: currentUser.name,
+          uploadTime: dayjs().format('YYYY-MM-DD HH:mm'),
+          description: values.description || '',
+          category: values.fileType,
+        });
+      }
+
+      message.success('上传成功');
+      setUploadModal(false);
+      setFileList([]);
+      form.resetFields();
+      forceUpdate({});
+    } catch (error) {
+      console.error(error);
+      message.error('上传失败，请检查表单信息');
+    } finally {
+      setUploading(false);
+    }
   };
 
   const getFileIcon = (type: string) => {
@@ -287,7 +300,7 @@ const ArchivePage = () => {
       key: 'fileCount',
       width: 100,
       render: (_: any, record: SkyPlan) => (
-        <Tag color="blue">{mockArchiveFiles(record.id).length} 份</Tag>
+        <Tag color="blue">{getArchivesByPlanId(record.id).length} 份</Tag>
       ),
     },
     {
@@ -493,18 +506,19 @@ const ArchivePage = () => {
 
             <div>
               <div className="flex items-center justify-between mb-3">
-                <h4 className="font-medium">归档资料（{mockArchiveFiles(selectedPlan.id).length}份）</h4>
+                <h4 className="font-medium">归档资料（{planArchiveFiles.length}份）</h4>
                 <Button size="small" icon={<UploadIcon size={14} />} onClick={() => { setDetailModal(false); handleUpload(selectedPlan); }}>
                   上传资料
                 </Button>
               </div>
               <List
-                dataSource={mockArchiveFiles(selectedPlan.id)}
+                dataSource={planArchiveFiles}
+                locale={{ emptyText: '暂无归档资料，请点击上方按钮上传' }}
                 renderItem={file => (
                   <List.Item
                     actions={[
-                      <Button type="link" size="small" icon={<Eye size={14} />}>预览</Button>,
-                      <Button type="link" size="small" icon={<Download size={14} />}>下载</Button>,
+                      <Button type="link" size="small" icon={<Eye size={14} />} onClick={() => handlePreview(file)}>预览</Button>,
+                      <Button type="link" size="small" icon={<Download size={14} />} onClick={() => handleDownload(file)}>下载</Button>,
                     ]}
                   >
                     <List.Item.Meta
@@ -529,9 +543,10 @@ const ArchivePage = () => {
       <Modal
         title="上传资料"
         open={uploadModal}
-        onCancel={() => setUploadModal(false)}
-        onOk={() => { message.success('上传成功'); setUploadModal(false); }}
+        onCancel={() => { setUploadModal(false); setFileList([]); }}
+        onOk={handleUploadSubmit}
         okText="上传"
+        confirmLoading={uploading}
       >
         <Form form={form} layout="vertical">
           <Form.Item
@@ -555,7 +570,17 @@ const ArchivePage = () => {
             <Input.TextArea rows={3} placeholder="请输入资料说明（选填）" />
           </Form.Item>
           <Form.Item label="上传文件">
-            <Upload.Dragger multiple>
+            <Upload.Dragger
+              multiple
+              fileList={fileList}
+              beforeUpload={(file) => {
+                setFileList([...fileList, file]);
+                return false;
+              }}
+              onRemove={(file) => {
+                setFileList(fileList.filter(f => f.uid !== file.uid));
+              }}
+            >
               <p className="ant-upload-drag-icon">
                 <UploadIcon size={48} className="text-blue-500" />
               </p>

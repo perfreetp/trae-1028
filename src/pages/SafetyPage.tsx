@@ -17,6 +17,7 @@ import {
   Badge,
   Select,
   DatePicker,
+  Avatar,
 } from 'antd';
 import {
   Shield,
@@ -26,7 +27,7 @@ import {
   Plus,
   User,
   Clock,
-  FileCheck,
+  Eye,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { useAppStore } from '../store/useAppStore';
@@ -37,70 +38,31 @@ const { TextArea } = Input;
 const { Option } = Select;
 
 const SafetyPage = () => {
-  const { plans, updateExistingPlan } = useAppStore();
+  const {
+    plans,
+    addProtection,
+    getProtectionsByPlanId,
+    getProtectionChecks,
+    toggleProtectionCheck,
+    currentUser,
+  } = useAppStore();
+
   const [selectedPlan, setSelectedPlan] = useState<SkyPlan | null>(null);
   const [detailModal, setDetailModal] = useState(false);
   const [recordModal, setRecordModal] = useState(false);
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
+  const [, forceUpdate] = useState({});
 
-  const activePlans = useMemo(() => 
+  const activePlans = useMemo(() =>
     plans.filter(p => ['commanded', 'signin', 'executing'].includes(p.status)),
     [plans]
   );
 
-  const mockProtections = (planId: string): ProtectionRecord[] => {
-    const baseRecords: ProtectionRecord[] = [
-      {
-        id: '1',
-        planId,
-        protector: '赵防护',
-        contactTime: dayjs().subtract(2, 'hour').format('YYYY-MM-DD HH:mm'),
-        content: '现场防护员已就位，防护信号已设置完毕',
-        isAbnormal: false,
-      },
-      {
-        id: '2',
-        planId,
-        protector: '赵防护',
-        contactTime: dayjs().subtract(1, 'hour').format('YYYY-MM-DD HH:mm'),
-        content: '施工正常进行，人员状态良好，无安全隐患',
-        isAbnormal: false,
-      },
-    ];
-    
-    if (dayjs().minute() % 2 === 0) {
-      baseRecords.push({
-        id: '3',
-        planId,
-        protector: '钱防护',
-        contactTime: dayjs().format('YYYY-MM-DD HH:mm'),
-        content: '发现接触网悬挂异物',
-        isAbnormal: true,
-        abnormalDesc: '接触网 K102+300 处发现塑料袋悬挂，已安排人员处理',
-      });
-    } else {
-      baseRecords.push({
-        id: '3',
-        planId,
-        protector: '钱防护',
-        contactTime: dayjs().format('YYYY-MM-DD HH:mm'),
-        content: '定时联络，一切正常',
-        isAbnormal: false,
-      });
-    }
-    
-    return baseRecords;
+  const getProtectionRecords = (planId: string): ProtectionRecord[] => {
+    const records = getProtectionsByPlanId(planId);
+    return records;
   };
-
-  const protectionChecklist = [
-    { id: '1', label: '现场防护员已按规定设置', checked: true },
-    { id: '2', label: '防护信号（红旗/信号灯已按规定设置', checked: true },
-    { id: '3', label: '驻站联络员已在行车室登记', checked: true },
-    { id: '4', label: '所有作业人员已佩戴安全防护用品', checked: true },
-    { id: '5', label: '施工负责人已进行安全技术交底', checked: false },
-    { id: '6', label: '应急救援设备已到位', checked: false },
-  ];
 
   const handleViewDetail = (plan: SkyPlan) => {
     setSelectedPlan(plan);
@@ -110,6 +72,7 @@ const SafetyPage = () => {
   const handleAddRecord = (plan: SkyPlan) => {
     setSelectedPlan(plan);
     form.resetFields();
+    form.setFieldsValue({ contactTime: dayjs() });
     setRecordModal(true);
   };
 
@@ -118,9 +81,21 @@ const SafetyPage = () => {
     try {
       setSubmitting(true);
       const values = await form.validateFields();
-      
+
+      addProtection({
+        planId: selectedPlan.id,
+        protector: values.protector,
+        contactTime: values.contactTime
+          ? values.contactTime.format('YYYY-MM-DD HH:mm')
+          : dayjs().format('YYYY-MM-DD HH:mm'),
+        content: values.content,
+        isAbnormal: values.isAbnormal || false,
+        abnormalDesc: values.isAbnormal ? values.abnormalDesc : undefined,
+      });
+
       message.success('防护记录已添加');
       setRecordModal(false);
+      forceUpdate({});
     } catch (error) {
       message.error('提交失败');
     } finally {
@@ -128,7 +103,9 @@ const SafetyPage = () => {
     }
   };
 
-  const handleCheckItem = (id: string) => {
+  const handleCheckItem = (planId: string, checkId: string) => {
+    toggleProtectionCheck(planId, checkId);
+    forceUpdate({});
     message.success('防护措施已确认');
   };
 
@@ -138,7 +115,7 @@ const SafetyPage = () => {
       dataIndex: 'projectName',
       width: 220,
       render: (text: string, record: SkyPlan) => {
-        const hasAbnormal = mockProtections(record.id).some(r => r.isAbnormal);
+        const hasAbnormal = getProtectionRecords(record.id).some(r => r.isAbnormal);
         return (
           <div className="font-medium">
             {hasAbnormal && (
@@ -180,7 +157,7 @@ const SafetyPage = () => {
       render: (_: any, record: SkyPlan) => (
         <div className="text-sm">
           <div>负责人：{record.personInCharge}</div>
-          <div className="text-gray-500">防护员：赵防护、钱防护</div>
+          <div className="text-gray-500">防护员：{record.workers.filter(w => w.position.includes('防护')).map(w => w.name).join('、') || '待配置'}</div>
         </div>
       ),
     },
@@ -189,7 +166,7 @@ const SafetyPage = () => {
       key: 'records',
       width: 150,
       render: (_: any, record: SkyPlan) => {
-        const records = mockProtections(record.id);
+        const records = getProtectionRecords(record.id);
         const abnormalCount = records.filter(r => r.isAbnormal).length;
         return (
           <Space>
@@ -218,7 +195,7 @@ const SafetyPage = () => {
       fixed: 'right' as const,
       render: (_: any, record: SkyPlan) => (
         <Space>
-          <Button type="link" size="small" onClick={() => handleViewDetail(record)}>
+          <Button type="link" size="small" icon={<Eye size={14} />} onClick={() => handleViewDetail(record)}>
             防护详情
           </Button>
           <Button type="link" size="small" icon={<Plus size={14} />} onClick={() => handleAddRecord(record)}>
@@ -231,9 +208,9 @@ const SafetyPage = () => {
 
   const stats = {
     total: activePlans.length,
-    normal: activePlans.filter(p => !mockProtections(p.id).some(r => r.isAbnormal)).length,
-    abnormal: activePlans.filter(p => mockProtections(p.id).some(r => r.isAbnormal)).length,
-    records: activePlans.reduce((sum, p) => sum + mockProtections(p.id).length, 0),
+    normal: activePlans.filter(p => !getProtectionRecords(p.id).some(r => r.isAbnormal)).length,
+    abnormal: activePlans.filter(p => getProtectionRecords(p.id).some(r => r.isAbnormal)).length,
+    records: activePlans.reduce((sum, p) => sum + getProtectionRecords(p.id).length, 0),
   };
 
   return (
@@ -308,47 +285,61 @@ const SafetyPage = () => {
 
             <div>
               <h4 className="font-medium mb-3">防护员联络记录</h4>
-              <Timeline
-                items={mockProtections(selectedPlan.id).map(record => ({
-                  color: record.isAbnormal ? 'red' : 'green',
-                  dot: record.isAbnormal ? <AlertTriangle size={14} /> : <Phone size={14} />,
-                  children: (
-                    <div className="pb-2">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-medium">{record.protector}</span>
-                        {record.isAbnormal && <Tag color="red">异常</Tag>}
-                        <span className="text-sm text-gray-500 flex items-center gap-1">
-                          <Clock size={12} />
-                          {record.contactTime}
-                        </span>
-                      </div>
-                      <div className="text-sm">{record.content}</div>
-                      {record.isAbnormal && record.abnormalDesc && (
-                        <div className="text-sm text-red-600 bg-red-50 p-2 rounded mt-2">
-                          <AlertTriangle size={14} className="inline mr-1" />
-                          {record.abnormalDesc}
-                        </div>
-                      )}
-                    </div>
-                  ),
-                }))}
-              />
+              <div className="max-h-[300px] overflow-y-auto pr-2">
+                {getProtectionRecords(selectedPlan.id).length > 0 ? (
+                  <Timeline
+                    items={getProtectionRecords(selectedPlan.id)
+                      .sort((a, b) => dayjs(b.contactTime).valueOf() - dayjs(a.contactTime).valueOf())
+                      .map(record => ({
+                        color: record.isAbnormal ? 'red' : 'green',
+                        dot: record.isAbnormal ? <AlertTriangle size={14} /> : <Phone size={14} />,
+                        children: (
+                          <div className="pb-2">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="font-medium">{record.protector}</span>
+                              {record.isAbnormal && <Tag color="red">异常</Tag>}
+                              <span className="text-sm text-gray-500 flex items-center gap-1">
+                                <Clock size={12} />
+                                {record.contactTime}
+                              </span>
+                            </div>
+                            <div className="text-sm">{record.content}</div>
+                            {record.isAbnormal && record.abnormalDesc && (
+                              <div className="text-sm text-red-600 bg-red-50 p-2 rounded mt-2">
+                                <AlertTriangle size={14} className="inline mr-1" />
+                                {record.abnormalDesc}
+                              </div>
+                            )}
+                          </div>
+                        ),
+                      }))}
+                  />
+                ) : (
+                  <div className="text-center text-gray-400 py-8">
+                    暂无联络记录
+                  </div>
+                )}
+              </div>
             </div>
 
             <div>
               <h4 className="font-medium mb-3">安全防护措施检查</h4>
               <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                {protectionChecklist.map(item => (
+                {getProtectionChecks(selectedPlan.id).map(item => (
                   <div key={item.id} className="flex items-center gap-3">
-                    <Checkbox 
+                    <Checkbox
                       checked={item.checked}
-                      onChange={() => handleCheckItem(item.id)}
+                      onChange={() => handleCheckItem(selectedPlan.id, item.id)}
                     >
                       <span className={item.checked ? 'text-gray-500 line-through' : ''}>
                         {item.label}
                       </span>
                     </Checkbox>
-                    {item.checked && <Tag color="success" className="ml-auto">已确认</Tag>}
+                    {item.checked && (
+                      <Tag color="success" className="ml-auto flex items-center gap-1">
+                        <Check size={12} /> 已确认
+                      </Tag>
+                    )}
                   </div>
                 ))}
               </div>
@@ -379,6 +370,8 @@ const SafetyPage = () => {
         onOk={handleSubmitRecord}
         confirmLoading={submitting}
         okText="提交记录"
+        width={520}
+        destroyOnClose
       >
         <Form form={form} layout="vertical">
           <Form.Item
@@ -390,6 +383,7 @@ const SafetyPage = () => {
               <Option value="赵防护">赵防护</Option>
               <Option value="钱防护">钱防护</Option>
               <Option value="孙防护">孙防护</Option>
+              <Option value="李防护">李防护</Option>
             </Select>
           </Form.Item>
           <Form.Item
@@ -398,7 +392,7 @@ const SafetyPage = () => {
             rules={[{ required: true, message: '请选择联络时间' }]}
             initialValue={dayjs()}
           >
-            <DatePicker showTime style={{ width: '100%' }} />
+            <DatePicker showTime style={{ width: '100%' }} format="YYYY-MM-DD HH:mm" />
           </Form.Item>
           <Form.Item
             name="content"
@@ -418,11 +412,18 @@ const SafetyPage = () => {
               </span>
             </Checkbox>
           </Form.Item>
-          <Form.Item
-            name="abnormalDesc"
-            label="异常情况描述"
-          >
-            <TextArea rows={3} placeholder="如果存在异常，请详细描述异常情况及处置措施" />
+          <Form.Item noStyle shouldUpdate={(prev, curr) => prev.isAbnormal !== curr.isAbnormal}>
+            {({ getFieldValue }) =>
+              getFieldValue('isAbnormal') && (
+                <Form.Item
+                  name="abnormalDesc"
+                  label="异常情况描述"
+                  rules={[{ required: true, message: '请描述异常情况' }]}
+                >
+                  <TextArea rows={3} placeholder="请详细描述异常情况及处置措施" />
+                </Form.Item>
+              )
+            }
           </Form.Item>
         </Form>
       </Modal>

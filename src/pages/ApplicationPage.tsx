@@ -115,6 +115,30 @@ const ApplicationPage = () => {
     try {
       setSubmitting(true);
       const values = await form.validateFields();
+
+      const validWorkers = workers.filter(w => w.name && w.position);
+      const validMachines = machines.filter(m => m.name);
+
+      if (validWorkers.length === 0 && validMachines.length === 0) {
+        message.error('请至少添加一名作业人员或一台施工机具');
+        setCurrentStep(2);
+        setSubmitting(false);
+        return;
+      }
+
+      if (validWorkers.length === 0) {
+        message.error('请至少添加一名作业人员');
+        setCurrentStep(2);
+        setSubmitting(false);
+        return;
+      }
+
+      if (validMachines.length === 0) {
+        message.error('请至少添加一台施工机具');
+        setCurrentStep(2);
+        setSubmitting(false);
+        return;
+      }
       
       const planData: Omit<SkyPlan, 'id' | 'createdAt' | 'updatedAt'> = {
         projectName: values.projectName,
@@ -129,8 +153,8 @@ const ApplicationPage = () => {
         mileageEnd: values.mileageEnd,
         affectedStations: values.affectedStations || [],
         constructionType: values.constructionType,
-        workers,
-        machines,
+        workers: validWorkers,
+        machines: validMachines,
         riskMeasures: values.riskMeasures || '',
         status: 'pending',
         currentApprovalLevel: 1,

@@ -21,15 +21,12 @@ import {
 } from 'antd';
 import {
   RefreshCw,
-  Clock,
-  MapPin,
   AlertTriangle,
   Check,
   X,
   Plus,
   Eye,
   FileDiff,
-  Calendar,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { useAppStore } from '../store/useAppStore';
@@ -40,80 +37,28 @@ const { TextArea } = Input;
 const { Option } = Select;
 
 const ChangePage = () => {
-  const { plans, updateExistingPlan } = useAppStore();
+  const { plans, getAllChanges, addChange, updateChange, currentUser } = useAppStore();
   const [activeTab, setActiveTab] = useState('pending');
   const [applyModal, setApplyModal] = useState(false);
   const [detailModal, setDetailModal] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<SkyPlan | null>(null);
   const [selectedChange, setSelectedChange] = useState<ChangeRecord | null>(null);
+  const [rejectModal, setRejectModal] = useState(false);
+  const [rejectForm] = Form.useForm();
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
 
-  const changeablePlans = useMemo(() => 
+  const changeablePlans = useMemo(() =>
     plans.filter(p => ['approved', 'commanded', 'signin', 'executing'].includes(p.status)),
     [plans]
   );
 
-  const mockChanges = (): ChangeRecord[] => {
-    const changes: ChangeRecord[] = [];
-    
-    plans.slice(0, 5).forEach((plan, index) => {
-      const types: ChangeType[] = ['time', 'scope', 'delay', 'cancel'];
-      const type = types[index % 4];
-      const statuses: Array<'pending' | 'approved' | 'rejected'> = ['pending', 'approved', 'rejected'];
-      const status = statuses[index % 3];
-      
-      const typeNames: Record<ChangeType, string> = {
-        time: '时间变更',
-        scope: '范围变更',
-        delay: '延期申请',
-        cancel: '取消申请',
-      };
+  const allChanges = useMemo(() => getAllChanges(), [getAllChanges]);
+  const pendingChanges = useMemo(() => allChanges.filter(c => c.status === 'pending'), [allChanges]);
+  const approvedChanges = useMemo(() => allChanges.filter(c => c.status === 'approved'), [allChanges]);
+  const rejectedChanges = useMemo(() => allChanges.filter(c => c.status === 'rejected'), [allChanges]);
 
-      const contentMap: Record<ChangeType, { old: string; new: string }> = {
-        time: {
-          old: `开始时间：${plan.startTime}`,
-          new: `开始时间：${dayjs(plan.startTime).add(30, 'minute').format('YYYY-MM-DD HH:mm')}`,
-        },
-        scope: {
-          old: `里程范围：${plan.mileageStart} - ${plan.mileageEnd}`,
-          new: `里程范围：${plan.mileageStart} - ${plan.mileageEnd.split('+')[0]}+${Number(plan.mileageEnd.split('+')[1]) + 3000}`,
-        },
-        delay: {
-          old: `结束时间：${plan.endTime}`,
-          new: `结束时间：${dayjs(plan.endTime).add(60, 'minute').format('YYYY-MM-DD HH:mm')}`,
-        },
-        cancel: {
-          old: '正常执行',
-          new: '取消本次施工',
-        },
-      };
-
-      changes.push({
-        id: `change-${index}`,
-        planId: plan.id,
-        changeType: type,
-        changeTypeName: typeNames[type],
-        reason: [
-          '现场天气原因，大风预警，需推迟施工',
-          '发现额外病害需要处理，需扩大施工范围',
-          '现场施工进度滞后，申请延期',
-          '设备故障，无法正常施工',
-        ][index % 4],
-        oldContent: contentMap[type].old,
-        newContent: contentMap[type].new,
-        status,
-        applyTime: dayjs().subtract(index, 'hour').format('YYYY-MM-DD HH:mm'),
-      });
-    });
-
-    return changes;
-  };
-
-  const allChanges = mockChanges();
-  const pendingChanges = allChanges.filter(c => c.status === 'pending');
-  const approvedChanges = allChanges.filter(c => c.status === 'approved');
-  const rejectedChanges = allChanges.filter(c => c.status === 'rejected');
+  const getPlanById = (id: string) => plans.find(p => p.id === id);
 
   const getChangeTypeColor = (type: ChangeType) => {
     const colors: Record<ChangeType, string> = {
@@ -125,7 +70,15 @@ const ChangePage = () => {
     return colors[type];
   };
 
-  const getPlanById = (id: string) => plans.find(p => p.id === id);
+  const getTypeNames = (type: ChangeType) => {
+    const names: Record<ChangeType, string> = {
+      time: '时间变更',
+      scope: '范围变更',
+      delay: '延期申请',
+      cancel: '取消申请',
+    };
+    return names[type];
+  };
 
   const handleApply = (plan?: SkyPlan) => {
     if (plan) {
@@ -148,10 +101,53 @@ const ChangePage = () => {
     try {
       setSubmitting(true);
       const values = await form.validateFields();
-      
+      const plan = plans.find(p => p.id === values.planId);
+      if (!plan) return;
+
+      let oldContent = '';
+      let newContent = '';
+
+      switch (values.changeType) {
+        case 'time':
+          oldContent = `开始时间：${plan.startTime}`;
+          newContent = values.newDate && values.newTime
+            ? `开始时间：${values.newDate.format('YYYY-MM-DD')} ${values.newTime.format('HH:mm')}`
+            : '时间变更';
+          break;
+        case 'delay':
+          oldContent = `结束时间：${plan.endTime}`;
+          newContent = values.newDate && values.newTime
+            ? `结束时间：${values.newDate.format('YYYY-MM-DD')} ${values.newTime.format('HH:mm')}`
+            : '延期';
+          break;
+        case 'scope':
+          oldContent = `里程范围：${plan.mileageStart} - ${plan.mileageEnd}`;
+          newContent = values.newMileageStart && values.newMileageEnd
+            ? `里程范围：${values.newMileageStart} - ${values.newMileageEnd}`
+            : '范围变更';
+          break;
+        case 'cancel':
+          oldContent = '正常执行';
+          newContent = '取消本次施工';
+          break;
+      }
+
+      addChange({
+        planId: values.planId,
+        changeType: values.changeType,
+        changeTypeName: getTypeNames(values.changeType),
+        reason: values.reason,
+        oldContent,
+        newContent,
+        status: 'pending',
+        applyTime: dayjs().format('YYYY-MM-DD HH:mm'),
+      });
+
       message.success('变更申请已提交，等待审批');
       setApplyModal(false);
+      setActiveTab('pending');
     } catch (error) {
+      console.error(error);
       message.error('提交失败');
     } finally {
       setSubmitting(false);
@@ -159,19 +155,33 @@ const ChangePage = () => {
   };
 
   const handleApprove = (change: ChangeRecord) => {
-    message.success('变更已批准');
+    Modal.confirm({
+      title: '批准变更申请',
+      content: '确定批准该变更申请吗？批准后将自动通知相关人员。',
+      okText: '确认批准',
+      onOk: () => {
+        updateChange(change.id, { status: 'approved' });
+        message.success('变更已批准');
+      },
+    });
   };
 
   const handleReject = (change: ChangeRecord) => {
-    Modal.confirm({
-      title: '驳回变更申请',
-      content: '请输入驳回原因',
-      okText: '确认驳回',
-      okType: 'danger',
-      onOk: () => {
-        message.success('已驳回变更申请');
-      },
-    });
+    setSelectedChange(change);
+    rejectForm.resetFields();
+    setRejectModal(true);
+  };
+
+  const handleConfirmReject = async () => {
+    if (!selectedChange) return;
+    try {
+      const values = await rejectForm.validateFields();
+      updateChange(selectedChange.id, { status: 'rejected' });
+      message.success('变更已驳回');
+      setRejectModal(false);
+    } catch {
+      message.error('请输入驳回原因');
+    }
   };
 
   const columns = [
@@ -195,19 +205,25 @@ const ChangePage = () => {
     {
       title: '变更内容',
       key: 'content',
-      width: 300,
+      width: 320,
       render: (_: any, record: ChangeRecord) => (
         <div className="text-sm">
           <div className="text-gray-500 line-through">{record.oldContent}</div>
-          <div className="text-blue-600 font-medium">→ {record.newContent}</div>
+          <div className="text-blue-600 font-medium mt-1">→ {record.newContent}</div>
         </div>
       ),
+    },
+    {
+      title: '变更原因',
+      dataIndex: 'reason',
+      width: 200,
+      ellipsis: true,
     },
     {
       title: '申请人',
       key: 'applicant',
       width: 100,
-      render: () => '张三',
+      render: () => currentUser.name,
     },
     {
       title: '申请时间',
@@ -234,21 +250,78 @@ const ChangePage = () => {
       width: 200,
       fixed: 'right' as const,
       render: (_: any, record: ChangeRecord) => (
-        <Space>
+        <Space size="small">
           <Button type="link" size="small" icon={<Eye size={14} />} onClick={() => handleViewDetail(record)}>
             详情
           </Button>
           {record.status === 'pending' && (
             <>
-              <Button type="link" size="small" icon={<Check size={14} />} onClick={() => handleApprove(record)}>
+              <Button type="link" size="small" type="primary" onClick={() => handleApprove(record)}>
                 批准
               </Button>
-              <Button type="link" size="small" danger icon={<X size={14} />} onClick={() => handleReject(record)}>
+              <Button type="link" size="small" danger onClick={() => handleReject(record)}>
                 驳回
               </Button>
             </>
           )}
         </Space>
+      ),
+    },
+  ];
+
+  const planColumns = [
+    {
+      title: '项目名称',
+      dataIndex: 'projectName',
+      width: 220,
+      render: (text: string) => <span className="font-medium">{text}</span>,
+    },
+    {
+      title: '施工类型',
+      dataIndex: 'constructionType',
+      width: 120,
+    },
+    {
+      title: '施工时间',
+      key: 'time',
+      width: 200,
+      render: (_: any, record: SkyPlan) => (
+        <div className="text-sm">
+          <div>{dayjs(record.startTime).format('YYYY-MM-DD')}</div>
+          <div className="text-gray-500">
+            {dayjs(record.startTime).format('HH:mm')} - {dayjs(record.endTime).format('HH:mm')}
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: '施工地点',
+      key: 'location',
+      width: 200,
+      render: (_: any, record: SkyPlan) => (
+        <div className="text-sm">
+          <div>{record.lineSection}</div>
+          <div className="text-gray-500">{record.mileageStart} - {record.mileageEnd}</div>
+        </div>
+      ),
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 120,
+      render: (status: SkyPlan['status']) => (
+        <Tag color={statusMap[status].color as any}>{statusMap[status].label}</Tag>
+      ),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 150,
+      fixed: 'right' as const,
+      render: (_: any, record: SkyPlan) => (
+        <Button type="primary" size="small" onClick={() => handleApply(record)}>
+          申请变更
+        </Button>
       ),
     },
   ];
@@ -263,7 +336,7 @@ const ChangePage = () => {
           dataSource={pendingChanges}
           rowKey="id"
           pagination={{ pageSize: 10 }}
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1300 }}
         />
       ),
     },
@@ -276,7 +349,7 @@ const ChangePage = () => {
           dataSource={approvedChanges}
           rowKey="id"
           pagination={{ pageSize: 10 }}
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1300 }}
         />
       ),
     },
@@ -289,7 +362,7 @@ const ChangePage = () => {
           dataSource={rejectedChanges}
           rowKey="id"
           pagination={{ pageSize: 10 }}
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1300 }}
         />
       ),
     },
@@ -329,62 +402,7 @@ const ChangePage = () => {
         }
       >
         <Table
-          columns={[
-            {
-              title: '项目名称',
-              dataIndex: 'projectName',
-              width: 220,
-              render: (text: string) => <span className="font-medium">{text}</span>,
-            },
-            {
-              title: '施工类型',
-              dataIndex: 'constructionType',
-              width: 120,
-            },
-            {
-              title: '施工时间',
-              key: 'time',
-              width: 200,
-              render: (_: any, record: SkyPlan) => (
-                <div className="text-sm">
-                  <div>{dayjs(record.startTime).format('YYYY-MM-DD')}</div>
-                  <div className="text-gray-500">
-                    {dayjs(record.startTime).format('HH:mm')} - {dayjs(record.endTime).format('HH:mm')}
-                  </div>
-                </div>
-              ),
-            },
-            {
-              title: '施工地点',
-              key: 'location',
-              width: 200,
-              render: (_: any, record: SkyPlan) => (
-                <div className="text-sm">
-                  <div>{record.lineSection}</div>
-                  <div className="text-gray-500">{record.mileageStart} - {record.mileageEnd}</div>
-                </div>
-              ),
-            },
-            {
-              title: '状态',
-              dataIndex: 'status',
-              width: 120,
-              render: (status: SkyPlan['status']) => (
-                <Tag color={statusMap[status].color as any}>{statusMap[status].label}</Tag>
-              ),
-            },
-            {
-              title: '操作',
-              key: 'action',
-              width: 150,
-              fixed: 'right' as const,
-              render: (_: any, record: SkyPlan) => (
-                <Button type="primary" size="small" onClick={() => handleApply(record)}>
-                  申请变更
-                </Button>
-              ),
-            },
-          ]}
+          columns={planColumns}
           dataSource={changeablePlans}
           rowKey="id"
           pagination={{ pageSize: 5 }}
@@ -404,6 +422,7 @@ const ChangePage = () => {
         confirmLoading={submitting}
         okText="提交申请"
         width={700}
+        destroyOnClose
       >
         <Form form={form} layout="vertical">
           <Form.Item
@@ -419,7 +438,7 @@ const ChangePage = () => {
               ))}
             </Select>
           </Form.Item>
-          
+
           <Form.Item
             name="changeType"
             label="变更类型"
@@ -498,9 +517,9 @@ const ChangePage = () => {
 
           <Form.Item
             name="impact"
-            label="影响范围说明"
+            label="影响范围说明（选填）"
           >
-            <TextArea rows={3} placeholder="请说明本次变更对运输、其他施工的影响及应对措施" />
+            <TextArea rows={2} placeholder="请说明本次变更对运输、其他施工的影响及应对措施" />
           </Form.Item>
         </Form>
       </Modal>
@@ -513,8 +532,8 @@ const ChangePage = () => {
         footer={
           selectedChange?.status === 'pending' ? (
             <Space>
-              <Button danger onClick={() => handleReject(selectedChange)}>驳回</Button>
-              <Button type="primary" onClick={() => handleApprove(selectedChange)}>批准</Button>
+              <Button danger onClick={() => { setDetailModal(false); handleReject(selectedChange); }}>驳回</Button>
+              <Button type="primary" onClick={() => { setDetailModal(false); handleApprove(selectedChange); }}>批准</Button>
             </Space>
           ) : null
         }
@@ -533,7 +552,7 @@ const ChangePage = () => {
             <Descriptions column={1} bordered size="small">
               <Descriptions.Item label="项目名称">{selectedPlan.projectName}</Descriptions.Item>
               <Descriptions.Item label="施工单位">{selectedPlan.constructionUnit}</Descriptions.Item>
-              <Descriptions.Item label="申请人">张三</Descriptions.Item>
+              <Descriptions.Item label="申请人">{currentUser.name}</Descriptions.Item>
               <Descriptions.Item label="申请时间">{selectedChange.applyTime}</Descriptions.Item>
             </Descriptions>
 
@@ -544,8 +563,8 @@ const ChangePage = () => {
                   <div className="text-xs text-gray-500 mb-1">变更前</div>
                   <div className="line-through text-gray-500">{selectedChange.oldContent}</div>
                 </div>
-                <div className="text-center">
-                  <FileDiff size={20} className="text-blue-500" />
+                <div className="text-center text-gray-400">
+                  <FileDiff size={20} />
                 </div>
                 <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
                   <div className="text-xs text-blue-500 mb-1">变更后</div>
@@ -572,6 +591,26 @@ const ChangePage = () => {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        title="驳回变更申请"
+        open={rejectModal}
+        onCancel={() => setRejectModal(false)}
+        onOk={handleConfirmReject}
+        okText="确认驳回"
+        okType="danger"
+        width={500}
+      >
+        <Form form={rejectForm} layout="vertical">
+          <Form.Item
+            name="reason"
+            label="驳回原因"
+            rules={[{ required: true, message: '请输入驳回原因' }]}
+          >
+            <TextArea rows={4} placeholder="请详细说明驳回该变更申请的原因" />
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   );

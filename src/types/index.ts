@@ -48,6 +48,12 @@ export interface ProtectionRecord {
   abnormalDesc?: string;
 }
 
+export interface ProtectionCheckItem {
+  id: string;
+  label: string;
+  checked: boolean;
+}
+
 export interface ChangeRecord {
   id: string;
   planId: string;
@@ -68,6 +74,8 @@ export interface ArchiveFile {
   fileSize: number;
   uploader: string;
   uploadTime: string;
+  description?: string;
+  category?: string;
 }
 
 export interface SkyPlan {
